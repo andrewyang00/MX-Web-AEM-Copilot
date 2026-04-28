@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "AEM Copilot Side Panel",
+  "version": "1.2.0",
+  "description": "Edge/Chrome side panel for AEM Copilot — KB-driven blade inventory + Reimagine validation.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "action": {
+    "default_title": "AEM Copilot"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://directline.botframework.com wss://directline.botframework.com https://*.botframework.com wss://*.botframework.com https://*.adobeprod.microsoft.com https://*.microsoft.com https://login.microsoftonline.com https://graph.microsoft.com;"
+  }
+}

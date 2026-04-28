@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AEM Copilot</title>
+  <link rel="stylesheet" href="sidepanel.css">
+  <!-- Bot Framework Web Chat SDK -->
+  <script src="webchat.js"></script>
+</head>
+<body>
+
+  <!-- Header -->
+  <div id="header">
+    <div id="brand">
+      <div id="logo">⚡</div>
+      <div id="brand-text">
+        <div id="brand-name">AEM Copilot</div>
+        <div id="brand-sub">Page Intelligence</div>
+      </div>
+    </div>
+    <button id="refreshBtn" title="Refresh page context">↺</button>
+  </div>
+
+  <!-- Page context pill -->
+  <div id="context-bar">
+    <div id="context-indicator"></div>
+    <div id="context-url">No AEM page detected</div>
+    <button id="analyzeBtn" disabled>Analyze</button>
+  </div>
+
+  <!-- Status messages -->
+  <div id="status-bar" class="hidden"></div>
+
+  <!-- POC Direct Line secret -->
+  <div id="secret-bar">
+    <input type="password" id="directLineSecretInput" placeholder="Paste Direct Line secret for POC" autocomplete="off" />
+    <button id="saveSecretBtn">Save</button>
+  </div>
+
+  <!-- Mode tabs -->
+  <div id="mode-tabs">
+    <button class="mode-tab active" data-mode="copilot">💬 Copilot</button>
+    <button class="mode-tab" data-mode="library">📚 Blade Library</button>
+  </div>
+
+  <!-- Copilot chat panel -->
+  <div id="panel-copilot" class="panel active">
+    <div id="webchat"></div>
+    <div id="chat-placeholder">
+      <div id="placeholder-icon">⚡</div>
+      <div id="placeholder-text">Click <strong>Analyze</strong> to load this page's context and start a conversation with your AEM Copilot.</div>
+    </div>
+  </div>
+
+  <!-- Blade Library panel -->
+  <div id="panel-library" class="panel">
+    <div id="library-search-bar">
+      <input type="text" id="librarySearch" placeholder="Search blades…" />
+    </div>
+    <div id="library-status">Not loaded — click Analyze first</div>
+    <div id="library-list"></div>
+  </div>
+
+  <!-- KB data and matchers must load before sidepanel.js. Order:
+       1. kbData.js          — KB-derived rules (templates, AEM signal map, routing)
+       2. bladeMatcher.js    — uses kbData to map AEM signals to KB blade names
+       3. bladeFingerprinter.js — fingerprints for library QA comparison
+       4. bladeValidator.js  — uses kbData + matcher for template compliance
+       5. sidepanel.js       — orchestrates everything -->
+  <script src="kbData.js"></script>
+  <script src="bladeMatcher.js"></script>
+  <script src="bladeFingerprinter.js"></script>
+  <script src="bladeValidator.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
