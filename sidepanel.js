@@ -932,10 +932,14 @@ function buildPageAnalysisPayload(pageUrl, aemJson) {
     detectedBladeInventory: inventory,
     inventoryNotes: [
       'Inventory is deterministic. officialBladeName values are KB-canonical — derived from AEM_Component_Mapping.md and validated against the KB known-blades list.',
-      'cqTemplate is resolved against KB Template_Routing.md. If no needle matches, the validator returns unableToConfirmTemplate=true.',
+      'Visual template is inferred from the detected blade composition first. cqTemplate is fallback/tiebreaker context only because PDP3 can be a catch-all AEM chassis.',
       'Section-master wrappers are classified by inspecting child structure per the KB section-master rule, never by surface signals alone.',
     ],
   };
+
+  if (window.AEMTemplateInferrer) {
+    payload.templateInference = window.AEMTemplateInferrer.inferTemplate(payload);
+  }
 
   if (window.AEMBladeValidator) {
     payload.deterministicValidation = window.AEMBladeValidator.validateInventory(payload);
@@ -960,7 +964,7 @@ function buildOpeningMessage(pageUrl, aemJson, templateName) {
   return `I'm reviewing this AEM page. The extension has already done deterministic KB matching. Use the payload below as the starting point and apply the uploaded KB rules for nuance.
 
 How to read the payload:
-1. cqTemplate is resolved by KB Template_Routing rules. If deterministicValidation.unableToConfirmTemplate is true, follow the KB rule and respond: "? Unable to Confirm — Template cannot be confidently identified from the provided JSON summary."
+1. Template detection is based on blade composition first. cqTemplate is fallback/tiebreaker context only because PDP3 can be a catch-all AEM chassis. If deterministicValidation.unableToConfirmTemplate is true, follow the KB rule and respond: "? Unable to Confirm — Template cannot be confidently identified from the provided JSON summary."
 2. detectedBladeInventory contains officialBladeName values that are KB-canonical (matched against AEM_Component_Mapping.md and validated against the KB blade list). Use them verbatim. Do NOT paraphrase or pluralize.
 3. deterministicValidation.present / possibleQaIssues / missing / ruleViolations / optionalAvailable / extras / unableToConfirm are already classified by template. Build your output sections from these.
 

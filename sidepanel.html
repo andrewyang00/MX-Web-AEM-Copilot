@@ -66,11 +66,13 @@
        1. kbData.js          — KB-derived rules (templates, AEM signal map, routing)
        2. bladeMatcher.js    — uses kbData to map AEM signals to KB blade names
        3. bladeFingerprinter.js — fingerprints for library QA comparison
-       4. bladeValidator.js  — uses kbData + matcher for template compliance
-       5. sidepanel.js       — orchestrates everything -->
+       4. templateInferrer.js — infers visual template from blade composition
+       5. bladeValidator.js  — uses kbData + matcher for template compliance
+       6. sidepanel.js       — orchestrates everything -->
   <script src="kbData.js"></script>
   <script src="bladeMatcher.js"></script>
   <script src="bladeFingerprinter.js"></script>
+  <script src="templateInferrer.js"></script>
   <script src="bladeValidator.js"></script>
   <script src="sidepanel.js"></script>
 </body>

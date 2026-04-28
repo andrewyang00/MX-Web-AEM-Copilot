@@ -5,7 +5,8 @@
 // and produces a deterministic compliance report against the detected inventory.
 //
 // All blade names referenced are KB-canonical (validated by bladeMatcher).
-// Templates are resolved by AEMBladeMatcher.resolveTemplate using the KB routing rules.
+// Templates are inferred from blade composition first. AEM cq:template routing is
+// only fallback/tiebreaker context because PDP3 can be a catch-all chassis.
 // ─────────────────────────────────────────────
 
 (function () {
@@ -16,11 +17,13 @@
       return { error: 'KB data or matcher not loaded' };
     }
 
-    const tplResolution = matcher.resolveTemplate(payload.cqTemplate);
+    const tplResolution = window.AEMTemplateInferrer
+      ? window.AEMTemplateInferrer.inferTemplate(payload)
+      : matcher.resolveTemplate(payload.cqTemplate);
     if (!tplResolution.template) {
       return {
         templateResolution: tplResolution,
-        message: tplResolution.note,
+        message: tplResolution.note || '? Unable to Confirm - Template cannot be confidently identified from the provided JSON summary.',
         unableToConfirmTemplate: true,
       };
     }
