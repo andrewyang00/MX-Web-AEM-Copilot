@@ -89,9 +89,8 @@
     {
       blade: 'Hero - Slim',
       confidence: 'medium',
-      note: 'First section-master with H1 + media + action group. KB QA should confirm Hero variant against template.',
+      note: 'section-master with H1 + media + action group. KB QA should confirm Hero variant against inferred template.',
       match: (s, ctx) =>
-        ctx.isFirstSection &&
         s.hasH1 &&
         (s.hasMedia || s.hasImage) &&
         s.hasActionGroup,
