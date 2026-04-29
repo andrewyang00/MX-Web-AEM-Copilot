@@ -53,17 +53,27 @@
 
   function buildAnchorMap(templateRules) {
     const requiredOwners = new Map();
+    const allOwners = new Map();
+    const addOwner = (map, blade, template) => {
+      if (!map.has(blade)) map.set(blade, new Set());
+      map.get(blade).add(template);
+    };
+
     for (const [template, rules] of Object.entries(templateRules || {})) {
       for (const blade of rules.required || []) {
-        if (!requiredOwners.has(blade)) requiredOwners.set(blade, []);
-        requiredOwners.get(blade).push(template);
+        addOwner(requiredOwners, blade, template);
+        addOwner(allOwners, blade, template);
+      }
+      for (const blade of rules.optional || []) {
+        addOwner(allOwners, blade, template);
       }
     }
 
     const anchorsByTemplate = {};
-    for (const [blade, templates] of requiredOwners.entries()) {
-      if (templates.length !== 1) continue;
-      const template = templates[0];
+    for (const [blade, requiredTemplates] of requiredOwners.entries()) {
+      const allTemplates = allOwners.get(blade) || new Set();
+      if (requiredTemplates.size !== 1 || allTemplates.size !== 1) continue;
+      const template = [...requiredTemplates][0];
       if (!anchorsByTemplate[template]) anchorsByTemplate[template] = [];
       anchorsByTemplate[template].push(blade);
     }
