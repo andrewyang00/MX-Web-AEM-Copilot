@@ -967,18 +967,100 @@ function buildPageAnalysisPayload(pageUrl, aemJson) {
 
 // ── Build opening context message ──
 function buildAgentPayload(payload) {
-  const clone = JSON.parse(JSON.stringify(payload));
+  const validation = payload.deterministicValidation || {};
+  const templateResolution = validation.templateResolution || payload.templateInference || {};
+  const selectedTemplate = templateResolution.template || templateResolution.inferredTemplate || null;
+  const visualRefs = payload.visualTemplateReferences || {};
+  const selectedVisualTemplate = (visualRefs.coreTemplates || []).find(t => t.template === selectedTemplate) || null;
 
-  if (clone.templateInference) {
-    delete clone.templateInference.scores;
-    delete clone.templateInference.anchorsByTemplate;
-  }
-  if (clone.deterministicValidation?.templateResolution) {
-    delete clone.deterministicValidation.templateResolution.scores;
-    delete clone.deterministicValidation.templateResolution.anchorsByTemplate;
+  function compactEvidence(ev) {
+    if (!ev) return null;
+    return {
+      confidence: ev.confidence,
+      note: ev.note,
+      order: ev.order,
+      headings: (ev.headings || []).slice(0, 3),
+      parentNodeName: ev.parentNodeName || null,
+    };
   }
 
-  return clone;
+  function compactStatusItem(item) {
+    return {
+      name: item.name,
+      severity: item.severity,
+      status: item.status,
+      reason: item.reason || null,
+      evidence: compactEvidence(item.evidence),
+    };
+  }
+
+  function compactInventoryItem(item) {
+    return {
+      order: item.order,
+      parentNodeName: item.parentNodeName || null,
+      candidateBlades: (item.candidateBlades || []).map(c => ({
+        officialBladeName: c.officialBladeName,
+        confidence: c.confidence,
+        note: c.note || c.reason || '',
+      })),
+      evidence: {
+        headings: (item.evidence?.headings || []).slice(0, 3),
+        ctas: (item.evidence?.ctas || []).slice(0, 3),
+        flags: {
+          hasH1: !!item.evidence?.flags?.hasH1,
+          hasH2: !!item.evidence?.flags?.hasH2,
+          hasMedia: !!item.evidence?.flags?.hasMedia,
+          hasImage: !!item.evidence?.flags?.hasImage,
+          hasActionGroup: !!item.evidence?.flags?.hasActionGroup,
+          hasTabs: !!item.evidence?.flags?.hasTabs,
+          hasCarousel: !!item.evidence?.flags?.hasCarousel,
+          hasPricing: !!item.evidence?.flags?.hasPricing,
+          hasCtaStacked: !!item.evidence?.flags?.hasCtaStacked,
+        },
+      },
+    };
+  }
+
+  return {
+    page: {
+      pageUrl: payload.pageUrl,
+      aemContentPath: payload.aemContentPath,
+      cqTemplate: payload.cqTemplate,
+      templateName: payload.templateName,
+      pageType: payload.pageType,
+      pageTitle: payload.pageTitle,
+      jcrDescription: payload.jcrDescription,
+    },
+    templateInference: {
+      template: templateResolution.template || null,
+      inferredTemplate: templateResolution.inferredTemplate || null,
+      confidence: templateResolution.confidence || null,
+      method: templateResolution.method || null,
+      unableToConfirmTemplate: !!templateResolution.unableToConfirmTemplate,
+      ambiguous: !!templateResolution.ambiguous,
+      ambiguityCandidates: templateResolution.ambiguityCandidates || [],
+      note: templateResolution.note || null,
+      cqTemplateResolution: templateResolution.cqTemplateResolution || null,
+      selectedScore: templateResolution.selectedScore || null,
+    },
+    selectedTemplateRules: validation.templateRules || null,
+    selectedVisualTemplate,
+    deterministicValidation: {
+      present: (validation.present || []).map(compactStatusItem),
+      possibleQaIssues: (validation.possibleQaIssues || []).map(compactStatusItem),
+      missing: validation.missing || [],
+      ruleViolations: validation.ruleViolations || [],
+      extras: (validation.extras || []).map(compactStatusItem),
+      unableToConfirm: (validation.unableToConfirm || []).map(compactStatusItem),
+      optionalAvailable: validation.optionalAvailable || [],
+      summary: validation.summary || null,
+      message: validation.message || null,
+      unableToConfirmTemplate: !!validation.unableToConfirmTemplate,
+    },
+    detectedBladeSummary: (templateResolution.detectedBlades || []).map(name => ({ name })),
+    detectedBladeInventory: (payload.detectedBladeInventory || []).map(compactInventoryItem),
+    kbInfo: payload.kbInfo || null,
+  };
 }
 
 function buildOpeningMessage(pageUrl, aemJson, templateName) {
