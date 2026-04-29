@@ -966,8 +966,24 @@ function buildPageAnalysisPayload(pageUrl, aemJson) {
 }
 
 // ── Build opening context message ──
+function buildAgentPayload(payload) {
+  const clone = JSON.parse(JSON.stringify(payload));
+
+  if (clone.templateInference) {
+    delete clone.templateInference.scores;
+    delete clone.templateInference.anchorsByTemplate;
+  }
+  if (clone.deterministicValidation?.templateResolution) {
+    delete clone.deterministicValidation.templateResolution.scores;
+    delete clone.deterministicValidation.templateResolution.anchorsByTemplate;
+  }
+
+  return clone;
+}
+
 function buildOpeningMessage(pageUrl, aemJson, templateName) {
   const payload = buildPageAnalysisPayload(pageUrl, aemJson);
+  const agentPayload = buildAgentPayload(payload);
   return `I'm reviewing this AEM page. The extension has already done deterministic KB matching. Use the payload below as the starting point and apply the uploaded KB rules for nuance.
 
 How to read the payload:
@@ -975,6 +991,8 @@ How to read the payload:
 2. detectedBladeInventory contains officialBladeName values that are KB-canonical (matched against AEM_Component_Mapping.md and validated against the KB blade list). Use them verbatim. Do NOT paraphrase or pluralize.
 3. visualTemplateReferences contains the core PNG-backed Frontify templates and label mappings. Use those names when reconciling visual template anatomy.
 4. deterministicValidation.present / possibleQaIssues / missing / ruleViolations / optionalAvailable / extras / unableToConfirm are already classified by template. Build your output sections from these.
+5. For Optional Blades Available, use deterministicValidation.optionalAvailable exactly. If it is empty, say there are no optional blades available from the selected template.
+6. Do not recommend blades from non-selected templates, visualTemplateReferences, or alternate inference candidates as optional enhancements.
 
 Reporting rules (from KB Author_Output_Style and QA_Governance):
 - Use the four KB statuses verbatim: ✓ Present, ⚠ Possible QA Issue, ✕ Missing, ? Unable to Confirm.
@@ -985,7 +1003,7 @@ Reporting rules (from KB Author_Output_Style and QA_Governance):
 - Apply ruleViolations entries verbatim under "Violations / Possible QA Issues".
 
 Page analysis payload:
-${JSON.stringify(payload, null, 2)}
+${JSON.stringify(agentPayload, null, 2)}
 
 Respond with this structure (from KB Author_Output_Style):
 1. Template Detected (with confidence)
