@@ -216,8 +216,13 @@
   // Returns the name if known, null otherwise. Never invents.
   function validateBladeName(name) {
     const kb = window.AEMKBData;
+    const visualRefs = window.AEMVisualTemplateReferences;
+    const resolvedName = visualRefs?.resolveBladeName ? visualRefs.resolveBladeName(name) : name;
     if (!kb || !kb.knownBladeNames) return name; // KB not loaded — accept
     if (kb.knownBladeNames.includes(name)) return name;
+    if (resolvedName !== name && kb.knownBladeNames.includes(resolvedName)) return resolvedName;
+    if (visualRefs?.knownBladeNames?.includes(name)) return name;
+    if (visualRefs?.knownBladeNames?.includes(resolvedName)) return resolvedName;
     return null;
   }
 

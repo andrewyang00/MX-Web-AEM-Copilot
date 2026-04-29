@@ -14,21 +14,41 @@
 
   function getDetectedBladeSet(inventory) {
     const detected = new Map();
+    const visualRefs = window.AEMVisualTemplateReferences;
+    function addName(name, evidence) {
+      if (!name) return;
+      if (!detected.has(name)) detected.set(name, []);
+      detected.get(name).push(evidence);
+    }
+
     for (const item of inventory || []) {
       for (const cand of item.candidateBlades || []) {
         const name = cand.officialBladeName;
         if (!name || name === '? Unable to Confirm' || name === 'Unmapped / Needs Review') continue;
-        if (!detected.has(name)) detected.set(name, []);
-        detected.get(name).push({
+        const evidence = {
           confidence: cand.confidence || 'low',
           note: cand.note || cand.reason || '',
           order: item.order,
           nodeName: item.nodeName,
           aemPath: item.aemPath,
-        });
+        };
+        addName(name, evidence);
+        const resolvedName = visualRefs?.resolveBladeName ? visualRefs.resolveBladeName(name) : name;
+        if (resolvedName !== name) {
+          addName(resolvedName, { ...evidence, matchedAs: name });
+        }
       }
     }
     return detected;
+  }
+
+  function getTemplateRules() {
+    const kb = window.AEMKBData;
+    const visualRefs = window.AEMVisualTemplateReferences;
+    return {
+      ...(kb?.templateRules || {}),
+      ...(visualRefs?.getTemplateRules ? visualRefs.getTemplateRules() : {}),
+    };
   }
 
   function buildAnchorMap(templateRules) {
@@ -126,7 +146,8 @@
   function inferTemplate(payload) {
     const kb = window.AEMKBData;
     const matcher = window.AEMBladeMatcher;
-    if (!kb || !kb.templateRules) {
+    const templateRules = getTemplateRules();
+    if (!Object.keys(templateRules).length) {
       return {
         template: null,
         confidence: 'low',
@@ -138,8 +159,8 @@
 
     const inventory = payload?.detectedBladeInventory || [];
     const detected = getDetectedBladeSet(inventory);
-    const anchorsByTemplate = buildAnchorMap(kb.templateRules);
-    const scores = Object.entries(kb.templateRules)
+    const anchorsByTemplate = buildAnchorMap(templateRules);
+    const scores = Object.entries(templateRules)
       .map(([template, rules]) => scoreTemplate(template, rules, detected, anchorsByTemplate))
       .sort(sortScores);
 
@@ -164,10 +185,14 @@
 
     const closeMatches = scores.filter(score => score.template !== top.template && isCloseScore(top, score));
     const anchorTemplates = scores.filter(score => score.anchorsPresent.length > 0);
-    const conflictingAnchorTemplates = anchorTemplates.filter(score => score.template !== top.template);
+    const conflictingAnchorTemplates = anchorTemplates.filter(score =>
+      score.template !== top.template &&
+      isCloseScore(top, score) &&
+      top.normalizedScore < 0.95
+    );
     let selected = top;
     let ambiguous = conflictingAnchorTemplates.length > 0 ||
-      (selected.anchorsPresent.length === 0 && closeMatches.length > 0);
+      (selected.anchorsPresent.length === 0 && closeMatches.length > 0 && selected.normalizedScore < 0.95);
     let usedCqTiebreaker = false;
     let note = selected.anchorsPresent.length
       ? `Inferred from anchor blade(s): ${selected.anchorsPresent.join(', ')}.`

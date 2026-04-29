@@ -10,6 +10,15 @@
 // ─────────────────────────────────────────────
 
 (function () {
+  function getTemplateRulesMap() {
+    const kb = window.AEMKBData;
+    const visualRefs = window.AEMVisualTemplateReferences;
+    return {
+      ...(kb?.templateRules || {}),
+      ...(visualRefs?.getTemplateRules ? visualRefs.getTemplateRules() : {}),
+    };
+  }
+
   function validateInventory(payload) {
     const kb = window.AEMKBData;
     const matcher = window.AEMBladeMatcher;
@@ -28,7 +37,7 @@
       };
     }
 
-    const templateRules = kb.templateRules[tplResolution.template];
+    const templateRules = getTemplateRulesMap()[tplResolution.template];
     if (!templateRules) {
       return {
         templateResolution: tplResolution,
@@ -40,11 +49,16 @@
 
     // Build map: blade name → list of inventory entries supporting it.
     const detected = new Map();
+    const visualRefs = window.AEMVisualTemplateReferences;
+    function addDetected(key, evidence) {
+      if (!detected.has(key)) detected.set(key, []);
+      detected.get(key).push(evidence);
+    }
+
     for (const item of inventory) {
       for (const cand of item.candidateBlades || []) {
         const key = cand.officialBladeName;
-        if (!detected.has(key)) detected.set(key, []);
-        detected.get(key).push({
+        const evidence = {
           confidence: cand.confidence,
           note: cand.note || cand.reason,
           order: item.order,
@@ -52,7 +66,12 @@
           aemPath: item.aemPath,
           headings: item.evidence?.headings || [],
           parentNodeName: item.parentNodeName || null,
-        });
+        };
+        addDetected(key, evidence);
+        const resolvedKey = visualRefs?.resolveBladeName ? visualRefs.resolveBladeName(key) : key;
+        if (resolvedKey !== key) {
+          addDetected(resolvedKey, { ...evidence, matchedAs: key });
+        }
       }
     }
 

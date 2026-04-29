@@ -1,0 +1,167 @@
+{
+  "version": "2026-04-29",
+  "source": "Frontify document 280 scrape + exported PNG template boards",
+  "purpose": "Visual reference boards for template-level matching and future per-blade visual QA.",
+  "notes": [
+    "Use these full-page boards as source references. For runtime visual matching, narrow candidates with JSON first, then compare a live page screenshot to the relevant board(s).",
+    "Per-blade crops should be generated later from these source boards and added to this manifest.",
+    "Surface normalized blade names in author-facing output; PNG annotation labels are aliases only."
+  ],
+  "templates": [
+    {
+      "template": "Product Home Page",
+      "frontifyTemplate": "Reimagine Product Home Page",
+      "sourceBoards": [
+        "source-boards/product-home-azure.png",
+        "source-boards/product-home-cloud-annotations.png"
+      ],
+      "required": [
+        "Hero - Slim",
+        "Secondary Sticky Navigation",
+        "CTA Stacked",
+        "Cards - Featured",
+        "Impact - Vertical Tabs",
+        "Card Grid",
+        "Impact - Media Demo"
+      ],
+      "optional": [
+        "Banner - Featured",
+        "Banner - CTA",
+        "Stats - Data Tiles",
+        "Carousel - Card Grid",
+        "Features - Pricing"
+      ],
+      "annotationAliases": {
+        "Hero - Product": "Hero - Slim",
+        "Secondary Nav": "Secondary Sticky Navigation",
+        "Card Grid - Featured": "Cards - Featured",
+        "High Impact - Product Attention": "Impact - Vertical Tabs",
+        "Card Grid - Products": "Card Grid",
+        "High Impact - Media Demo": "Impact - Media Demo",
+        "Banner - CTA Banner": "Banner - CTA",
+        "Stats - Data With Icon": "Stats - Data Tiles",
+        "Carousel - Case Study": "Carousel - Card Grid"
+      }
+    },
+    {
+      "template": "Product Detail Page",
+      "frontifyTemplate": "Reimagine Product Detail Page (PDP)",
+      "sourceBoards": [
+        "source-boards/product-detail-page-annotations.png"
+      ],
+      "required": [
+        "Hero - Slim",
+        "Secondary Sticky Navigation",
+        "CTA Stacked",
+        "Impact - Vertical Tabs",
+        "Features - Pricing"
+      ],
+      "optional": [
+        "Impact - Media Demo",
+        "Stats - Data with Icon",
+        "Banner - Featured",
+        "Carousel - Card Grid",
+        "FAQ"
+      ]
+    },
+    {
+      "template": "Product Detail 3",
+      "frontifyTemplate": "Product Detail 3 (BizApps)",
+      "sourceBoards": [
+        "source-boards/product-detail-page-annotations.png"
+      ],
+      "required": [
+        "Hero - Slim",
+        "Secondary Sticky Navigation",
+        "Impact - Vertical Tabs",
+        "Features - Pricing",
+        "Cards - Logo Wall",
+        "CTA Stacked"
+      ],
+      "optional": [
+        "Features - Product Highlight",
+        "Stats - Featured",
+        "Carousel - Card Grid"
+      ]
+    },
+    {
+      "template": "Product Category Landing",
+      "frontifyTemplate": "Product Category Landing",
+      "sourceBoards": [
+        "source-boards/product-category-landing.png"
+      ],
+      "required": [
+        "Hero - Slim",
+        "Secondary Sticky Navigation",
+        "Features - Product Highlight",
+        "Search - Filter Grid",
+        "Carousel - Card Grid"
+      ],
+      "optional": [
+        "Impact - Vertical Tabs",
+        "Features - Pricing Comparison",
+        "Stats - Data Tiles"
+      ]
+    },
+    {
+      "template": "Product Solutions Landing",
+      "frontifyTemplate": "Product Solution Landing",
+      "sourceBoards": [
+        "source-boards/product-solutions-landing.png"
+      ],
+      "required": [
+        "Hero - Slim",
+        "Secondary Sticky Navigation",
+        "Impact - Vertical Tabs",
+        "Cards - Logo Wall",
+        "Carousel - Card Grid",
+        "Features - Pricing"
+      ],
+      "optional": [
+        "Features - Product Highlight",
+        "Banner - Featured",
+        "Stats - Data Tiles",
+        "FAQ"
+      ]
+    },
+    {
+      "template": "Solution Center",
+      "frontifyTemplate": "Solution Center (B2B Hub)",
+      "sourceBoards": [
+        "source-boards/solution-center.png"
+      ],
+      "required": [
+        "Hero - Featured Cards Carousel",
+        "Carousel - Card Grid",
+        "Impact - Vertical Tabs",
+        "Stats - Featured",
+        "Cards - Featured Grid",
+        "CTA Stacked"
+      ],
+      "optional": [
+        "Banner - Featured",
+        "Stats - Data Tiles",
+        "Carousel - Card Grid"
+      ]
+    },
+    {
+      "template": "Solution Category Landing",
+      "frontifyTemplate": "Solution Center Category Landing (B2B Hub)",
+      "sourceBoards": [
+        "source-boards/solution-category-landing-annotations.png"
+      ],
+      "required": [
+        "Hero - Slim",
+        "Search - Filter Grid",
+        "Card Grid",
+        "Carousel - Card Grid",
+        "Features - Product Highlight",
+        "Banner - Featured",
+        "CTA Stacked"
+      ],
+      "optional": [
+        "Carousel - Card Grid"
+      ]
+    }
+  ]
+}
