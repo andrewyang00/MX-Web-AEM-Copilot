@@ -129,6 +129,18 @@
       match: (s) => s.hasBannerFeatures,
     },
 
+    {
+      blade: 'Banner - CTA',
+      confidence: 'medium',
+      note: 'section id or heading suggests a banner with CTA; QA should confirm Banner - CTA visual treatment',
+      match: (s, ctx) =>
+        s.hasActionGroup &&
+        !s.hasCards &&
+        !s.hasCarousel &&
+        !s.hasTabs &&
+        /banner/i.test(`${ctx.sectionId || ''} ${s.headings?.join(' ') || ''}`),
+    },
+
     // ── Stats variants ──
     // The KB has three: Stats - Data with Icon, Stats - Data Tiles, Stats - Featured.
     // We can't tell them apart structurally without more clues. Default to medium-confidence

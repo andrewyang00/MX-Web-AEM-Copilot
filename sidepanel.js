@@ -740,6 +740,8 @@ function isViableGridChild(value, key) {
 
   // Per KB Modal Rule: foundation/modal is supporting functionality, not a blade.
   if (rt.includes('foundation/modal')) return false;
+  // Announcement banners are page chrome and are not part of template anatomy.
+  if (rt.includes('blade/announcement-banner')) return false;
 
   // Only include keys that look structural (sections, banners, navs, footnotes, utility).
   const isStructural =
@@ -809,6 +811,40 @@ function isWrapperResourceType(rt) {
   return false;
 }
 
+function shouldSuppressInventoryEntry(rt, signals, candidates) {
+  const lower = String(rt || '').toLowerCase();
+  const onlyUnable = candidates.length > 0 &&
+    candidates.every(c => c.officialBladeName === '? Unable to Confirm');
+
+  if (!onlyUnable) return false;
+
+  // Empty shell sections and Experience Fragment placeholders add noise but do
+  // not give authors actionable blade guidance.
+  if (
+    signals.resourceTypes.some(type => type.includes('experiencefragment/v1/experiencefragment')) &&
+    !signals.headings.length &&
+    !signals.ctas.length
+  ) {
+    return true;
+  }
+
+  // Completely empty section-master wrappers are placeholders, not blades.
+  if (
+    lower.includes('section-master') &&
+    !signals.headings.length &&
+    !signals.ctas.length &&
+    !signals.hasMedia &&
+    !signals.hasImage &&
+    !signals.hasActionGroup &&
+    !signals.hasCards &&
+    !signals.hasCarousel
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function buildBladeInventory(aemJson, pageUrl) {
   const content = getPageContent(aemJson);
   const contentPath = getAemContentPath(pageUrl);
@@ -862,6 +898,10 @@ function buildBladeInventory(aemJson, pageUrl) {
 
     const signals = collectChildSignals(node);
     const candidates = classifyBladeCandidate(node, signals, index, { parentKey });
+
+    if (shouldSuppressInventoryEntry(rt, signals, candidates)) {
+      return;
+    }
 
     items.push({
       order: items.length + 1,
