@@ -17,6 +17,7 @@ const CONFIG = {
 // ── State ──
 let currentTab = null;
 let currentPageUrl = null;
+let currentPageContext = null;
 let currentAemJson = null;
 let bladeLibrary = [];
 let chatStarted = false;
@@ -168,16 +169,16 @@ function setQualificationStatus(result) {
 function normalizeQualificationResult(value) {
   if (!value || typeof value !== 'object') return null;
   const qualifiedValue = value.qualified ?? value.isQualified ?? value.selfServiceWebQualified ?? value.canContinue;
-  const statusText = String(value.status || value.result || value.qualificationStatus || '').toLowerCase();
+  const statusText = String(value.status || value.result || value.qualificationStatus || value.statusmessage || value.statusMessage || '').toLowerCase();
   let isQualified = typeof qualifiedValue === 'boolean' ? qualifiedValue : null;
   if (isQualified === null && statusText) {
     if (/(not|ineligible|unqualified|no)/i.test(statusText)) isQualified = false;
-    else if (/(qualified|eligible|yes|approved)/i.test(statusText)) isQualified = true;
+    else if (/(qualified|eligible|yes|approved|record found|found in umt|can continue)/i.test(statusText)) isQualified = true;
   }
   if (isQualified === null) return null;
 
   const source = value.source || value.table || value.lookupSource || 'Dataverse';
-  const reason = value.reason || value.message || value.detail || value.notes || '';
+  const reason = value.reason || value.message || value.detail || value.statusmessage || value.statusMessage || value.notes || '';
   return {
     state: isQualified ? 'qualified' : 'not-qualified',
     title: isQualified ? 'Qualified for Self-Service Web' : 'Not qualified for Self-Service Web',
@@ -213,11 +214,23 @@ function extractQualificationFromActivity(activity) {
   if (marker) {
     return normalizeQualificationResult(tryParseJson(marker[1]));
   }
+  if (/(self-service web|ssw|umt)/i.test(text)) {
+    return normalizeQualificationResult({ statusmessage: text, source: 'UMT' });
+  }
   return null;
 }
 
 function stripQualificationMarker(text) {
   return String(text || '').replace(/SSW_QUALIFICATION_RESULT\s*:\s*\{[\s\S]*?\}(?:\s|$)/, '').trim();
+}
+
+function buildQualificationLookupMessage(pageContext) {
+  return [
+    'Check this URL in UMT to determine if it is self-service web qualified.',
+    `URL: ${pageContext.liveUrl}`,
+    'Normalize the URL to EN-US before lookup if needed.',
+    'Return the lookup result with liveurl and statusmessage, and also include structured fields qualified, reason, and source when available.',
+  ].join('\n');
 }
 
 function slugToTitle(slug) {
@@ -236,6 +249,77 @@ function isAemPage(url) {
   ) && !url.includes('chrome://') && !url.includes('edge://');
 }
 
+function cleanPath(pathname) {
+  return String(pathname || '')
+    .replace(/^\/editor\.html/, '')
+    .replace(/^\/sites\.html/, '')
+    .replace(/\/+$/, '')
+    .replace(/\.html$/, '');
+}
+
+function stripLocalePrefix(pathname) {
+  return String(pathname || '').replace(/^\/[a-z]{2}-[a-z]{2}(?=\/|$)/i, '');
+}
+
+function normalizePageUrl(rawUrl) {
+  const url = new URL(rawUrl);
+  const host = url.hostname.toLowerCase();
+  const path = cleanPath(url.pathname);
+  const normalized = {
+    sourceUrl: rawUrl,
+    displayPath: path || '/',
+    aemContentPath: path,
+    analysisUrl: rawUrl,
+    liveUrl: rawUrl,
+    site: 'unknown',
+    isAuthor: host.includes('adobeprod.microsoft.com'),
+  };
+
+  if (path.startsWith('/content/microsoft/bade/en-us')) {
+    const livePath = path.replace(/^\/content\/microsoft\/bade\/en-us/i, '/en-us') || '/en-us';
+    normalized.site = 'microsoft';
+    normalized.aemContentPath = path;
+    normalized.analysisUrl = `${CONFIG.aemHost}${path}.html`;
+    normalized.liveUrl = `https://www.microsoft.com${livePath}`;
+    normalized.displayPath = livePath;
+    return normalized;
+  }
+
+  if (path.startsWith('/content/azure/acom/en-us')) {
+    const livePath = path.replace(/^\/content\/azure\/acom\/en-us/i, '/en-us') || '/en-us';
+    normalized.site = 'azure';
+    normalized.aemContentPath = path;
+    normalized.analysisUrl = `${CONFIG.aemHost}${path}.html`;
+    normalized.liveUrl = `https://azure.microsoft.com${livePath}`;
+    normalized.displayPath = livePath;
+    return normalized;
+  }
+
+  if (host === 'www.microsoft.com' || (host.endsWith('.microsoft.com') && !host.includes('azure.'))) {
+    const livePath = path.startsWith('/en-us') ? path : `/en-us${stripLocalePrefix(path)}`;
+    normalized.site = 'microsoft';
+    normalized.aemContentPath = `/content/microsoft/bade${livePath}`;
+    normalized.analysisUrl = `${CONFIG.aemHost}${normalized.aemContentPath}.html`;
+    normalized.liveUrl = `https://www.microsoft.com${livePath}`;
+    normalized.displayPath = livePath;
+    return normalized;
+  }
+
+  if (host === 'azure.microsoft.com') {
+    const livePath = path.startsWith('/en-us') ? path : `/en-us${stripLocalePrefix(path)}`;
+    normalized.site = 'azure';
+    normalized.aemContentPath = `/content/azure/acom${livePath}`;
+    normalized.analysisUrl = `${CONFIG.aemHost}${normalized.aemContentPath}.html`;
+    normalized.liveUrl = `https://azure.microsoft.com${livePath}`;
+    normalized.displayPath = livePath;
+    return normalized;
+  }
+
+  normalized.analysisUrl = `${url.origin}${path}.html`;
+  normalized.liveUrl = `${url.origin}${path}`;
+  return normalized;
+}
+
 // ── Detect current page ──
 async function detectPage() {
   try {
@@ -244,14 +328,14 @@ async function detectPage() {
       contextUrl.textContent = 'No AEM page detected';
       contextIndicator.className = '';
       analyzeBtn.disabled = true;
+      currentPageContext = null;
       return;
     }
-    const url = new URL(currentTab.url);
-    const displayUrl = url.pathname.replace(/\.html$/, '');
-    contextUrl.textContent = displayUrl;
+    currentPageContext = normalizePageUrl(currentTab.url);
+    contextUrl.textContent = currentPageContext.displayPath;
     contextIndicator.className = 'active';
     analyzeBtn.disabled = false;
-    currentPageUrl = currentTab.url;
+    currentPageUrl = currentPageContext.analysisUrl;
   } catch (e) {
     console.error('detectPage error:', e);
   }
@@ -259,18 +343,55 @@ async function detectPage() {
 
 // ── AEM URL helpers ──
 function getAemContentPath(pageUrl) {
-  const url = new URL(pageUrl);
-  let path = url.pathname;
-  path = path.replace(/^\/editor\.html/, '');
-  path = path.replace(/^\/sites\.html/, '');
-  path = path.replace(/\.html$/, '');
-  return path;
+  return normalizePageUrl(pageUrl).aemContentPath;
 }
 
 function getAemJsonUrl(pageUrl, selector = 'infinity') {
-  const url = new URL(pageUrl);
-  const contentPath = getAemContentPath(pageUrl);
-  return `${url.origin}${contentPath}.${selector}.json`;
+  const page = normalizePageUrl(pageUrl);
+  const origin = page.isAuthor ? new URL(page.analysisUrl).origin : CONFIG.aemHost;
+  return `${origin}${page.aemContentPath}.${selector}.json`;
+}
+
+async function fetchJsonWithVersionResolution(jsonUrl) {
+  async function fetchJson(fetchUrl) {
+    const res = await fetch(fetchUrl, { credentials: 'include' });
+    if (!res.ok && res.status !== 300) {
+      return { error: `HTTP ${res.status} - ${res.statusText}`, status: res.status, url: fetchUrl };
+    }
+
+    const text = await res.text();
+    try {
+      return { data: JSON.parse(text), status: res.status, url: fetchUrl };
+    } catch (e) {
+      return { error: `Could not parse JSON from ${fetchUrl}: ${e.message}`, status: res.status, body: text.slice(0, 500) };
+    }
+  }
+
+  function pickHighestVersionPath(paths) {
+    if (!Array.isArray(paths)) return null;
+    const candidates = paths
+      .filter(p => typeof p === 'string')
+      .map(p => {
+        const match = p.match(/\.(\d+)\.json$/);
+        return match ? { path: p, version: Number(match[1]) } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.version - a.version);
+    return candidates[0]?.path || null;
+  }
+
+  const first = await fetchJson(jsonUrl);
+  if (first.error) return first;
+
+  const versionPath = pickHighestVersionPath(first.data);
+  if (versionPath) {
+    const versionUrl = new URL(versionPath, jsonUrl).href;
+    const second = await fetchJson(versionUrl);
+    if (second.error) return second;
+    return { data: second.data, sourceUrl: versionUrl, versioned: true, versionList: first.data };
+  }
+
+  return { data: first.data, sourceUrl: first.url, versioned: false };
 }
 
 // ── Fetch AEM JSON via passive session ──
@@ -322,7 +443,7 @@ async function fetchAemJson(pageUrl) {
           const versionPath = pickHighestVersionPath(first.data);
 
           if (versionPath) {
-            const versionUrl = new URL(versionPath, location.origin).href;
+            const versionUrl = new URL(versionPath, url).href;
             const second = await fetchJson(versionUrl);
             if (second.error) return second;
             return { data: second.data, sourceUrl: versionUrl, versioned: true, versionList: first.data };
@@ -336,7 +457,17 @@ async function fetchAemJson(pageUrl) {
       args: [jsonUrl],
     });
     const result = results?.[0]?.result;
-    if (result?.error) throw new Error(result.error);
+    if (result?.error) {
+      console.warn('Passive page JSON fetch failed; trying extension fetch:', result.error);
+      const fallback = await fetchJsonWithVersionResolution(jsonUrl);
+      if (fallback?.error) throw new Error(fallback.error);
+      if (fallback?.versioned) {
+        console.info('AEM versioned JSON selected:', fallback.sourceUrl);
+        setStatus('✓ Versioned JSON loaded');
+      }
+      contextIndicator.className = 'active';
+      return fallback.data;
+    }
     if (result?.versioned) {
       console.info('AEM versioned JSON selected:', result.sourceUrl);
       setStatus('✓ Versioned JSON loaded');
@@ -344,8 +475,20 @@ async function fetchAemJson(pageUrl) {
     contextIndicator.className = 'active';
     return result.data;
   } catch (e) {
-    contextIndicator.className = '';
-    throw e;
+    try {
+      console.warn('Passive page JSON fetch threw; trying extension fetch:', e);
+      const fallback = await fetchJsonWithVersionResolution(jsonUrl);
+      if (fallback?.error) throw new Error(fallback.error);
+      if (fallback?.versioned) {
+        console.info('AEM versioned JSON selected:', fallback.sourceUrl);
+        setStatus('✓ Versioned JSON loaded');
+      }
+      contextIndicator.className = 'active';
+      return fallback.data;
+    } catch (fallbackError) {
+      contextIndicator.className = '';
+      throw fallbackError;
+    }
   }
 }
 
@@ -461,18 +604,38 @@ async function startChat(aemJson, pageUrl) {
     await waitForWebChat();
     const token = await getDirectLineToken();
     const directLine = window.WebChat.createDirectLine({ token });
+    const pageContext = normalizePageUrl(pageUrl);
     const templateName = extractTemplateName(aemJson);
     const useCases = readSelectedUseCases();
     const openingMessage = buildOpeningMessage(pageUrl, aemJson, templateName, useCases);
+    const qualificationMessage = buildQualificationLookupMessage(pageContext);
     let connected = false;
+    let analysisMessageSent = false;
+    let analysisFallbackTimer = null;
     const store = window.WebChat.createStore(
       {},
       ({ dispatch }) => next => action => {
+        function sendOpeningMessage(delayMs = 0) {
+          if (analysisMessageSent) return;
+          analysisMessageSent = true;
+          if (analysisFallbackTimer) {
+            clearTimeout(analysisFallbackTimer);
+            analysisFallbackTimer = null;
+          }
+          setTimeout(() => {
+            dispatch({
+              type: 'WEB_CHAT/SEND_MESSAGE',
+              payload: { text: openingMessage }
+            });
+          }, delayMs);
+        }
+
         if (action.type === 'DIRECT_LINE/INCOMING_ACTIVITY') {
           const activity = action.payload?.activity;
           const qualification = extractQualificationFromActivity(activity);
           if (qualification) {
             setQualificationStatus(qualification);
+            sendOpeningMessage(500);
             if (activity?.text) {
               const cleanText = stripQualificationMarker(activity.text);
               action = {
@@ -489,23 +652,16 @@ async function startChat(aemJson, pageUrl) {
         if (action.type === 'DIRECT_LINE/CONNECT_FULFILLED' && !connected) {
           connected = true;
           setTimeout(() => {
-            dispatch({
-              type: 'WEB_CHAT/SEND_EVENT',
-              payload: {
-                name: 'pageQualificationRequested',
-                value: {
-                  pageUrl,
-                  aemContentPath: getAemContentPath(pageUrl),
-                  useCases,
-                  requiresSelfServiceWebQualification: useCases.includes('selfServiceWeb'),
-                },
-              },
-            });
-            dispatch({
-              type: 'WEB_CHAT/SEND_MESSAGE',
-              payload: { text: openingMessage }
-            });
-          }, 500);
+            if (useCases.includes('selfServiceWeb')) {
+              dispatch({
+                type: 'WEB_CHAT/SEND_MESSAGE',
+                payload: { text: qualificationMessage }
+              });
+              analysisFallbackTimer = setTimeout(() => sendOpeningMessage(), 10000);
+              return;
+            }
+            sendOpeningMessage();
+          }, useCases.includes('selfServiceWeb') ? 1200 : 500);
         }
         return next(action);
       }
@@ -1118,12 +1274,16 @@ function buildBladeInventory(aemJson, pageUrl) {
 
 function buildPageAnalysisPayload(pageUrl, aemJson) {
   const content = getPageContent(aemJson);
+  const pageContext = normalizePageUrl(pageUrl);
   const templatePath = extractTemplatePath(aemJson);
   const inventory = buildBladeInventory(aemJson, pageUrl);
 
   const payload = {
-    pageUrl,
-    aemContentPath: getAemContentPath(pageUrl),
+    pageUrl: pageContext.analysisUrl,
+    sourceUrl: pageContext.sourceUrl,
+    normalizedLiveUrl: pageContext.liveUrl,
+    aemContentPath: pageContext.aemContentPath,
+    site: pageContext.site,
     cqTemplate: templatePath,
     templateName: templatePath ? templatePath.split('/').pop() : 'Unknown Template',
     pageType: content?.pageType || '',
@@ -1297,7 +1457,10 @@ function buildAgentPayload(payload) {
   return {
     page: {
       pageUrl: payload.pageUrl,
+      sourceUrl: payload.sourceUrl,
+      normalizedLiveUrl: payload.normalizedLiveUrl,
       aemContentPath: payload.aemContentPath,
+      site: payload.site,
       cqTemplate: payload.cqTemplate,
       templateName: payload.templateName,
       pageType: payload.pageType,
@@ -1355,7 +1518,7 @@ How to read the payload:
 5. For Optional Blades Available, use deterministicValidation.optionalAvailable exactly. If it is empty, say there are no optional blades available from the selected template.
 6. Do not recommend blades from non-selected templates, visualTemplateReferences, or alternate inference candidates as optional enhancements.
 7. Use bladeOrderGuide.expectedOrder when listing required, optional present, optional available, missing, and recommended additions. When recommending a blade to add, include bladeOrderGuide.expectedOrder.recommendedPlacement so the user knows what area it belongs near.
-8. If useCases.selfServiceWebSelected is true, run the Agent Dataverse URL qualification lookup before the analysis. Return the result to the extension as channelData.selfServiceWebQualification or value with fields { "qualified": boolean, "reason": string, "source": "Dataverse" }. If structured channelData is not available, include one hidden marker line exactly like: SSW_QUALIFICATION_RESULT:{"qualified":true,"reason":"Matched qualified URL record","source":"Dataverse"}.
+8. If useCases.selfServiceWebSelected is true, a separate short message was already sent before this payload asking you to check page.normalizedLiveUrl in UMT. Use that lookup result at the top of your analysis. Return the result to the extension as channelData.selfServiceWebQualification or value with fields { "qualified": boolean, "reason": string, "source": "Dataverse" }. If structured channelData is not available, include one hidden marker line exactly like: SSW_QUALIFICATION_RESULT:{"qualified":true,"reason":"Matched qualified URL record","source":"Dataverse"}.
 9. If Self-Service Web is not qualified, tell the user at the top that they should not continue with Self-Service Web until the URL is qualified, then still provide any QA-oriented observations requested by the selected use cases.
 
 Reporting rules (from KB Author_Output_Style and QA_Governance):
