@@ -253,10 +253,7 @@ function isQualificationError(activity) {
 }
 
 function buildQualificationLookupMessage(pageContext) {
-  return [
-    'Check UMT to determine if this page is self-service web qualified.',
-    `aemURL: ${pageContext.liveUrl}`,
-  ].join('\n');
+  return pageContext.liveUrl;
 }
 
 function slugToTitle(slug) {
