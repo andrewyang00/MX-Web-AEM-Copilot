@@ -20,6 +20,8 @@ let currentPageUrl = null;
 let currentAemJson = null;
 let bladeLibrary = [];
 let chatStarted = false;
+let selectedUseCases = ['selfServiceWeb'];
+let currentQualification = null;
 
 // ── DOM refs ──
 const contextIndicator = document.getElementById('context-indicator');
@@ -34,6 +36,10 @@ const libraryStatus = document.getElementById('library-status');
 const librarySearch = document.getElementById('librarySearch');
 const directLineSecretInput = document.getElementById('directLineSecretInput');
 const saveSecretBtn = document.getElementById('saveSecretBtn');
+const useCaseCheckboxes = Array.from(document.querySelectorAll('.use-case-checkbox'));
+const qualificationCard = document.getElementById('qualification-card');
+const qualificationTitle = document.getElementById('qualification-title');
+const qualificationDetail = document.getElementById('qualification-detail');
 
 
 // ── POC secret storage ──
@@ -73,6 +79,62 @@ directLineSecretInput?.addEventListener('input', () => {
   CONFIG.directLineSecret = (directLineSecretInput.value || '').trim();
 });
 
+// ── Use case selection ──
+function readSelectedUseCases() {
+  const selected = useCaseCheckboxes
+    .filter(input => input.checked)
+    .map(input => input.value);
+  if (selected.length) return selected;
+  const fallback = useCaseCheckboxes.find(input => input.value === 'selfServiceWeb');
+  if (fallback) fallback.checked = true;
+  return ['selfServiceWeb'];
+}
+
+function syncUseCaseState() {
+  selectedUseCases = readSelectedUseCases();
+  try {
+    const save = chrome.storage.local.set({ selectedUseCases });
+    if (save?.catch) {
+      save.catch(e => console.warn('Unable to save use cases:', e));
+    }
+  } catch (e) {
+    console.warn('Unable to save use cases:', e);
+  }
+  if (!selectedUseCases.includes('selfServiceWeb')) {
+    setQualificationStatus({
+      state: 'not-applicable',
+      title: 'Self-Service Web not selected',
+      detail: 'Select Self-Service Web and analyze the page to check qualification.',
+    });
+  } else if (!currentQualification) {
+    setQualificationStatus({
+      state: 'pending',
+      title: 'Not checked yet',
+      detail: 'Analyze a page to check whether this URL is qualified.',
+    });
+  }
+}
+
+async function loadSavedUseCases() {
+  try {
+    const result = await chrome.storage.local.get(['selectedUseCases']);
+    const saved = Array.isArray(result?.selectedUseCases) && result.selectedUseCases.length
+      ? result.selectedUseCases
+      : selectedUseCases;
+    useCaseCheckboxes.forEach(input => {
+      input.checked = saved.includes(input.value);
+    });
+    selectedUseCases = readSelectedUseCases();
+    syncUseCaseState();
+  } catch (e) {
+    console.warn('Unable to load use cases:', e);
+  }
+}
+
+useCaseCheckboxes.forEach(input => {
+  input.addEventListener('change', syncUseCaseState);
+});
+
 // ── Mode tabs ──
 document.querySelectorAll('.mode-tab').forEach(tab => {
   tab.addEventListener('click', () => {
@@ -89,6 +151,73 @@ function setStatus(msg, isError = false) {
   statusBar.textContent = msg;
   statusBar.classList.remove('hidden', 'error');
   if (isError) statusBar.classList.add('error');
+}
+
+function setQualificationStatus(result) {
+  if (!qualificationCard || !qualificationTitle || !qualificationDetail) return;
+  const state = result?.state || 'pending';
+  qualificationCard.classList.remove('qualified', 'not-qualified', 'pending', 'not-applicable');
+  qualificationCard.classList.add(state);
+  qualificationTitle.textContent = result?.title || 'Qualification status unavailable';
+  qualificationDetail.textContent = result?.detail || '';
+  currentQualification = ['qualified', 'not-qualified'].includes(state)
+    ? (result?.raw || result || null)
+    : null;
+}
+
+function normalizeQualificationResult(value) {
+  if (!value || typeof value !== 'object') return null;
+  const qualifiedValue = value.qualified ?? value.isQualified ?? value.selfServiceWebQualified ?? value.canContinue;
+  const statusText = String(value.status || value.result || value.qualificationStatus || '').toLowerCase();
+  let isQualified = typeof qualifiedValue === 'boolean' ? qualifiedValue : null;
+  if (isQualified === null && statusText) {
+    if (/(not|ineligible|unqualified|no)/i.test(statusText)) isQualified = false;
+    else if (/(qualified|eligible|yes|approved)/i.test(statusText)) isQualified = true;
+  }
+  if (isQualified === null) return null;
+
+  const source = value.source || value.table || value.lookupSource || 'Dataverse';
+  const reason = value.reason || value.message || value.detail || value.notes || '';
+  return {
+    state: isQualified ? 'qualified' : 'not-qualified',
+    title: isQualified ? 'Qualified for Self-Service Web' : 'Not qualified for Self-Service Web',
+    detail: reason ? `${reason} (${source})` : `Lookup completed via ${source}.`,
+    raw: value,
+  };
+}
+
+function tryParseJson(value) {
+  if (!value || typeof value !== 'string') return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function extractQualificationFromActivity(activity) {
+  const candidates = [
+    activity?.value,
+    activity?.channelData?.qualificationResult,
+    activity?.channelData?.selfServiceWebQualification,
+    activity?.channelData?.dataverseQualification,
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeQualificationResult(candidate);
+    if (normalized) return normalized;
+  }
+
+  const text = activity?.text || '';
+  const marker = text.match(/SSW_QUALIFICATION_RESULT\s*:\s*(\{[\s\S]*?\})(?:\s|$)/);
+  if (marker) {
+    return normalizeQualificationResult(tryParseJson(marker[1]));
+  }
+  return null;
+}
+
+function stripQualificationMarker(text) {
+  return String(text || '').replace(/SSW_QUALIFICATION_RESULT\s*:\s*\{[\s\S]*?\}(?:\s|$)/, '').trim();
 }
 
 function slugToTitle(slug) {
@@ -333,14 +462,45 @@ async function startChat(aemJson, pageUrl) {
     const token = await getDirectLineToken();
     const directLine = window.WebChat.createDirectLine({ token });
     const templateName = extractTemplateName(aemJson);
-    const openingMessage = buildOpeningMessage(pageUrl, aemJson, templateName);
+    const useCases = readSelectedUseCases();
+    const openingMessage = buildOpeningMessage(pageUrl, aemJson, templateName, useCases);
     let connected = false;
     const store = window.WebChat.createStore(
       {},
       ({ dispatch }) => next => action => {
+        if (action.type === 'DIRECT_LINE/INCOMING_ACTIVITY') {
+          const activity = action.payload?.activity;
+          const qualification = extractQualificationFromActivity(activity);
+          if (qualification) {
+            setQualificationStatus(qualification);
+            if (activity?.text) {
+              const cleanText = stripQualificationMarker(activity.text);
+              action = {
+                ...action,
+                payload: {
+                  ...action.payload,
+                  activity: { ...activity, text: cleanText },
+                },
+              };
+              if (!cleanText) return;
+            }
+          }
+        }
         if (action.type === 'DIRECT_LINE/CONNECT_FULFILLED' && !connected) {
           connected = true;
           setTimeout(() => {
+            dispatch({
+              type: 'WEB_CHAT/SEND_EVENT',
+              payload: {
+                name: 'pageQualificationRequested',
+                value: {
+                  pageUrl,
+                  aemContentPath: getAemContentPath(pageUrl),
+                  useCases,
+                  requiresSelfServiceWebQualification: useCases.includes('selfServiceWeb'),
+                },
+              },
+            });
             dispatch({
               type: 'WEB_CHAT/SEND_MESSAGE',
               payload: { text: openingMessage }
@@ -1061,6 +1221,79 @@ function buildAgentPayload(payload) {
     };
   }
 
+  function statusLookup(items) {
+    const map = new Map();
+    (items || []).forEach(item => map.set(item.name, item));
+    return map;
+  }
+
+  function buildBladeOrderGuide() {
+    const rules = validation.templateRules || {};
+    const presentByName = statusLookup(validation.present);
+    const qaByName = statusLookup(validation.possibleQaIssues);
+    const missingByName = statusLookup(validation.missing);
+    const inventory = payload.detectedBladeInventory || [];
+    const templateSequence = [
+      ...(rules.required || []).map(name => ({ name, severity: 'required' })),
+      ...(rules.optional || []).map(name => ({ name, severity: 'optional' })),
+    ];
+
+    function currentEvidence(name) {
+      return presentByName.get(name)?.evidence || qaByName.get(name)?.evidence || null;
+    }
+
+    function currentArea(ev) {
+      if (!ev) return null;
+      const heading = (ev.headings || []).find(Boolean);
+      return heading ? `section ${ev.order}: ${heading}` : `section ${ev.order}`;
+    }
+
+    function insertionHint(index) {
+      const before = templateSequence.slice(0, index).reverse().find(item => currentEvidence(item.name));
+      const after = templateSequence.slice(index + 1).find(item => currentEvidence(item.name));
+      const beforeEv = before ? currentEvidence(before.name) : null;
+      const afterEv = after ? currentEvidence(after.name) : null;
+      if (beforeEv) return `Add after ${before.name} (${currentArea(beforeEv)}).`;
+      if (afterEv) return `Add before ${after.name} (${currentArea(afterEv)}).`;
+      return 'Add in the template order shown here.';
+    }
+
+    const expectedOrder = templateSequence.map((item, index) => {
+      const ev = currentEvidence(item.name);
+      const optionalAvailable = (validation.optionalAvailable || []).includes(item.name);
+      return {
+        expectedOrder: index + 1,
+        name: item.name,
+        severity: item.severity,
+        status: presentByName.get(item.name)?.status ||
+          qaByName.get(item.name)?.status ||
+          missingByName.get(item.name)?.status ||
+          (optionalAvailable ? 'Optional Available' : 'Not detected'),
+        currentOrder: ev?.order || null,
+        currentArea: currentArea(ev),
+        recommendedPlacement: ev ? null : insertionHint(index),
+      };
+    });
+
+    const currentPageOrder = inventory.map(item => {
+      const candidate = (item.candidateBlades || [])[0] || {};
+      const heading = (item.evidence?.headings || []).find(Boolean);
+      return {
+        currentOrder: item.order,
+        name: candidate.officialBladeName || '? Unable to Confirm',
+        confidence: candidate.confidence || null,
+        area: heading ? `section ${item.order}: ${heading}` : `section ${item.order}`,
+        parentArea: item.parentNodeName ? `inside ${item.parentNodeName}` : null,
+      };
+    });
+
+    return {
+      rule: 'Use expectedOrder for required/optional template reporting. Use currentPageOrder only to describe what is on the page today.',
+      expectedOrder,
+      currentPageOrder,
+    };
+  }
+
   return {
     page: {
       pageUrl: payload.pageUrl,
@@ -1099,14 +1332,20 @@ function buildAgentPayload(payload) {
     },
     detectedBladeSummary: (templateResolution.detectedBlades || []).map(name => ({ name })),
     detectedBladeInventory: (payload.detectedBladeInventory || []).map(compactInventoryItem),
+    bladeOrderGuide: buildBladeOrderGuide(),
     kbInfo: payload.kbInfo || null,
   };
 }
 
-function buildOpeningMessage(pageUrl, aemJson, templateName) {
+function buildOpeningMessage(pageUrl, aemJson, templateName, useCases = ['selfServiceWeb']) {
   const payload = buildPageAnalysisPayload(pageUrl, aemJson);
   const agentPayload = buildAgentPayload(payload);
-  return `I'm reviewing this AEM page. The extension has already done deterministic KB matching. Use the payload below as the starting point and apply the uploaded KB rules for nuance.
+  agentPayload.useCases = {
+    selected: useCases,
+    selfServiceWebSelected: useCases.includes('selfServiceWeb'),
+    qaSelected: useCases.includes('qa'),
+  };
+  return `I'm reviewing this AEM page for these selected use cases: ${useCases.join(', ')}. The extension has already done deterministic KB matching. Use the payload below as the starting point and apply the uploaded KB rules for nuance.
 
 How to read the payload:
 1. Template detection is based on blade composition first. cqTemplate is fallback/tiebreaker context only because PDP3 can be a catch-all AEM chassis. If deterministicValidation.unableToConfirmTemplate is true, follow the KB rule and respond: "? Unable to Confirm — Template cannot be confidently identified from the provided JSON summary."
@@ -1115,6 +1354,9 @@ How to read the payload:
 4. deterministicValidation.present / possibleQaIssues / missing / ruleViolations / optionalAvailable / extras / unableToConfirm are already classified by template. Build your output sections from these.
 5. For Optional Blades Available, use deterministicValidation.optionalAvailable exactly. If it is empty, say there are no optional blades available from the selected template.
 6. Do not recommend blades from non-selected templates, visualTemplateReferences, or alternate inference candidates as optional enhancements.
+7. Use bladeOrderGuide.expectedOrder when listing required, optional present, optional available, missing, and recommended additions. When recommending a blade to add, include bladeOrderGuide.expectedOrder.recommendedPlacement so the user knows what area it belongs near.
+8. If useCases.selfServiceWebSelected is true, run the Agent Dataverse URL qualification lookup before the analysis. Return the result to the extension as channelData.selfServiceWebQualification or value with fields { "qualified": boolean, "reason": string, "source": "Dataverse" }. If structured channelData is not available, include one hidden marker line exactly like: SSW_QUALIFICATION_RESULT:{"qualified":true,"reason":"Matched qualified URL record","source":"Dataverse"}.
+9. If Self-Service Web is not qualified, tell the user at the top that they should not continue with Self-Service Web until the URL is qualified, then still provide any QA-oriented observations requested by the selected use cases.
 
 Reporting rules (from KB Author_Output_Style and QA_Governance):
 - Use the four KB statuses verbatim: ✓ Present, ⚠ Possible QA Issue, ✕ Missing, ? Unable to Confirm.
@@ -1123,6 +1365,7 @@ Reporting rules (from KB Author_Output_Style and QA_Governance):
 - Per KB anti-hallucination rules: do not invent blade names, templates, or rules not in the validation output or knownBladeNames.
 - If validation.extras contains a blade that isn't in any template list, mention it but do not flag as an error — it may be intentional optional content.
 - Apply ruleViolations entries verbatim under "Violations / Possible QA Issues".
+- Keep all blade status tables in bladeOrderGuide.expectedOrder order, not alphabetical order.
 
 Page analysis payload:
 ${JSON.stringify(agentPayload, null, 2)}
@@ -1153,6 +1396,21 @@ analyzeBtn.addEventListener('click', async () => {
   analyzeBtn.textContent = '…';
   try {
     setStatus('Fetching page JSON…');
+    selectedUseCases = readSelectedUseCases();
+    currentQualification = null;
+    if (selectedUseCases.includes('selfServiceWeb')) {
+      setQualificationStatus({
+        state: 'pending',
+        title: 'Checking Self-Service Web qualification',
+        detail: 'Waiting for the Agent Dataverse lookup result for this URL.',
+      });
+    } else {
+      setQualificationStatus({
+        state: 'not-applicable',
+        title: 'Self-Service Web not selected',
+        detail: 'Qualification lookup skipped for this analysis.',
+      });
+    }
     currentAemJson = await fetchAemJson(currentPageUrl);
     setStatus(`✓ JSON loaded — ${Object.keys(currentAemJson).length} nodes`);
     fetchBladeLibrary().catch(e => console.warn('Blade library fetch failed:', e));
@@ -1173,6 +1431,7 @@ refreshBtn.addEventListener('click', async () => {
   currentAemJson = null;
   chatStarted = false;
   bladeLibrary = [];
+  currentQualification = null;
   webchatEl.innerHTML = '';
   libraryList.innerHTML = '';
   libraryStatus.textContent = 'Not loaded — click Analyze first';
@@ -1180,11 +1439,12 @@ refreshBtn.addEventListener('click', async () => {
   chatPlaceholder.querySelector('#placeholder-text').innerHTML =
     'Click <strong>Analyze</strong> to load this page\'s context and start a conversation with your AEM Copilot.';
   setStatus(null);
+  syncUseCaseState();
   await detectPage();
 });
 
 // ── Init ──
-loadSavedSecret().finally(() => detectPage());
+Promise.allSettled([loadSavedSecret(), loadSavedUseCases()]).finally(() => detectPage());
 chrome.tabs.onActivated.addListener(() => detectPage());
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === 'complete') detectPage();

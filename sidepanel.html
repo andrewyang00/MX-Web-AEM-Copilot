@@ -29,6 +29,25 @@
     <button id="analyzeBtn" disabled>Analyze</button>
   </div>
 
+  <!-- Use case selection -->
+  <div id="use-case-bar" aria-label="Use cases">
+    <label class="use-case-option">
+      <input type="checkbox" class="use-case-checkbox" value="selfServiceWeb" checked>
+      <span>Self-Service Web</span>
+    </label>
+    <label class="use-case-option">
+      <input type="checkbox" class="use-case-checkbox" value="qa">
+      <span>QA</span>
+    </label>
+  </div>
+
+  <!-- Self-Service Web qualification -->
+  <div id="qualification-card" class="qualification-card pending">
+    <div class="qualification-label">Self-Service Web Qualification</div>
+    <div id="qualification-title">Not checked yet</div>
+    <div id="qualification-detail">Analyze a page to check whether this URL is qualified.</div>
+  </div>
+
   <!-- Status messages -->
   <div id="status-bar" class="hidden"></div>
 
