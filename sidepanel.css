@@ -178,6 +178,7 @@ html, body {
 .qualification-card.not-qualified { border-left-color: #b42318; background: #fff7f5; }
 .qualification-card.pending { border-left-color: var(--warn); background: #fffaf0; }
 .qualification-card.not-applicable { border-left-color: var(--text-muted); background: var(--surface); }
+.qualification-card.error { border-left-color: #b42318; background: #fff1f0; }
 
 .qualification-label {
   font-size: 10px;

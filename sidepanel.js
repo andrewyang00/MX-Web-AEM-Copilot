@@ -159,7 +159,7 @@ function setStatus(msg, isError = false) {
 function setQualificationStatus(result) {
   if (!qualificationCard || !qualificationTitle || !qualificationDetail) return;
   const state = result?.state || 'pending';
-  qualificationCard.classList.remove('qualified', 'not-qualified', 'pending', 'not-applicable');
+  qualificationCard.classList.remove('qualified', 'not-qualified', 'pending', 'not-applicable', 'error');
   qualificationCard.classList.add(state);
   qualificationTitle.textContent = result?.title || 'Qualification status unavailable';
   qualificationDetail.textContent = result?.detail || '';
@@ -245,6 +245,11 @@ function stripQualificationMarker(text) {
 function isAemUrlPrompt(activity) {
   if (activity?.from?.role === 'user' || activity?.from?.id === 'aem-author') return false;
   return /provide\s+the\s+aemurl|please\s+provide.*aemurl|aemurl/i.test(activity?.text || '');
+}
+
+function isQualificationError(activity) {
+  if (activity?.from?.role === 'user' || activity?.from?.id === 'aem-author') return false;
+  return /contentfiltered|an error has occurred|error code/i.test(activity?.text || '');
 }
 
 function buildQualificationLookupMessage(pageContext) {
@@ -647,6 +652,13 @@ async function startChat(aemJson, pageUrl) {
           });
         }
 
+        function sendVisibleMessage(text) {
+          dispatch({
+            type: 'WEB_CHAT/SEND_MESSAGE',
+            payload: { text }
+          });
+        }
+
         function sendOpeningMessage(delayMs = 0) {
           if (analysisMessageSent) return;
           analysisMessageSent = true;
@@ -686,9 +698,17 @@ async function startChat(aemJson, pageUrl) {
             setQualificationStatus({
               state: 'pending',
               title: 'Checking Self-Service Web qualification',
-              detail: 'Providing the normalized aemURL to the UMT topic.',
+              detail: 'Providing the normalized URL to the UMT topic.',
             });
-            sendHiddenMessage(`aemURL: ${pageContext.liveUrl}`);
+            sendVisibleMessage(pageContext.liveUrl);
+          } else if (isQualificationError(activity)) {
+            setQualificationStatus({
+              state: 'error',
+              title: 'Qualification lookup failed',
+              detail: 'The Agent returned an error before the UMT result. Try Analyze again, or continue without the qualification result.',
+              showContinue: true,
+              actionText: 'Continue without result',
+            });
           }
         }
         if (action.type === 'DIRECT_LINE/CONNECT_FULFILLED' && !connected) {
@@ -696,7 +716,7 @@ async function startChat(aemJson, pageUrl) {
           setTimeout(() => {
             if (useCases.includes('selfServiceWeb')) {
               sendPendingAnalysis = () => sendOpeningMessage();
-              sendHiddenMessage(qualificationMessage);
+              sendVisibleMessage(qualificationMessage);
               qualificationTimeoutTimer = setTimeout(() => {
                 setQualificationStatus({
                   state: 'pending',
