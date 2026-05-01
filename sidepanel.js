@@ -23,6 +23,7 @@ let bladeLibrary = [];
 let chatStarted = false;
 let selectedUseCases = ['selfServiceWeb'];
 let currentQualification = null;
+let sendPendingAnalysis = null;
 
 // ── DOM refs ──
 const contextIndicator = document.getElementById('context-indicator');
@@ -41,6 +42,7 @@ const useCaseCheckboxes = Array.from(document.querySelectorAll('.use-case-checkb
 const qualificationCard = document.getElementById('qualification-card');
 const qualificationTitle = document.getElementById('qualification-title');
 const qualificationDetail = document.getElementById('qualification-detail');
+const qualificationContinueBtn = document.getElementById('qualificationContinueBtn');
 
 
 // ── POC secret storage ──
@@ -161,10 +163,22 @@ function setQualificationStatus(result) {
   qualificationCard.classList.add(state);
   qualificationTitle.textContent = result?.title || 'Qualification status unavailable';
   qualificationDetail.textContent = result?.detail || '';
+  if (qualificationContinueBtn) {
+    qualificationContinueBtn.textContent = result?.actionText || 'Continue analysis';
+    qualificationContinueBtn.classList.toggle('hidden', !result?.showContinue);
+  }
   currentQualification = ['qualified', 'not-qualified'].includes(state)
     ? (result?.raw || result || null)
     : null;
 }
+
+qualificationContinueBtn?.addEventListener('click', () => {
+  if (!sendPendingAnalysis) {
+    setStatus('Analysis is not ready yet.', true);
+    return;
+  }
+  sendPendingAnalysis();
+});
 
 function normalizeQualificationResult(value) {
   if (!value || typeof value !== 'object') return null;
@@ -197,6 +211,10 @@ function tryParseJson(value) {
 }
 
 function extractQualificationFromActivity(activity) {
+  if (activity?.from?.role === 'user' || activity?.from?.id === 'aem-author') {
+    return null;
+  }
+
   const candidates = [
     activity?.value,
     activity?.channelData?.qualificationResult,
@@ -214,7 +232,7 @@ function extractQualificationFromActivity(activity) {
   if (marker) {
     return normalizeQualificationResult(tryParseJson(marker[1]));
   }
-  if (/(self-service web|ssw|umt)/i.test(text)) {
+  if (/(not qualified|unqualified|ineligible|qualified|eligible|approved|record found|found in umt|can continue)/i.test(text)) {
     return normalizeQualificationResult({ statusmessage: text, source: 'UMT' });
   }
   return null;
@@ -224,12 +242,15 @@ function stripQualificationMarker(text) {
   return String(text || '').replace(/SSW_QUALIFICATION_RESULT\s*:\s*\{[\s\S]*?\}(?:\s|$)/, '').trim();
 }
 
+function isAemUrlPrompt(activity) {
+  if (activity?.from?.role === 'user' || activity?.from?.id === 'aem-author') return false;
+  return /provide\s+the\s+aemurl|please\s+provide.*aemurl|aemurl/i.test(activity?.text || '');
+}
+
 function buildQualificationLookupMessage(pageContext) {
   return [
-    'Check this URL in UMT to determine if it is self-service web qualified.',
-    `URL: ${pageContext.liveUrl}`,
-    'Normalize the URL to EN-US before lookup if needed.',
-    'Return the lookup result with liveurl and statusmessage, and also include structured fields qualified, reason, and source when available.',
+    'Check UMT to determine if this page is self-service web qualified.',
+    `aemURL: ${pageContext.liveUrl}`,
   ].join('\n');
 }
 
@@ -611,22 +632,32 @@ async function startChat(aemJson, pageUrl) {
     const qualificationMessage = buildQualificationLookupMessage(pageContext);
     let connected = false;
     let analysisMessageSent = false;
-    let analysisFallbackTimer = null;
+    let qualificationTimeoutTimer = null;
+    let aemUrlRetrySent = false;
     const store = window.WebChat.createStore(
       {},
       ({ dispatch }) => next => action => {
+        function sendHiddenMessage(text) {
+          dispatch({
+            type: 'WEB_CHAT/SEND_MESSAGE',
+            payload: {
+              text,
+              channelData: { hiddenFromTranscript: true },
+            }
+          });
+        }
+
         function sendOpeningMessage(delayMs = 0) {
           if (analysisMessageSent) return;
           analysisMessageSent = true;
-          if (analysisFallbackTimer) {
-            clearTimeout(analysisFallbackTimer);
-            analysisFallbackTimer = null;
+          sendPendingAnalysis = null;
+          if (qualificationTimeoutTimer) {
+            clearTimeout(qualificationTimeoutTimer);
+            qualificationTimeoutTimer = null;
           }
+          qualificationContinueBtn?.classList.add('hidden');
           setTimeout(() => {
-            dispatch({
-              type: 'WEB_CHAT/SEND_MESSAGE',
-              payload: { text: openingMessage }
-            });
+            sendHiddenMessage(openingMessage);
           }, delayMs);
         }
 
@@ -634,8 +665,11 @@ async function startChat(aemJson, pageUrl) {
           const activity = action.payload?.activity;
           const qualification = extractQualificationFromActivity(activity);
           if (qualification) {
-            setQualificationStatus(qualification);
-            sendOpeningMessage(500);
+            setQualificationStatus({
+              ...qualification,
+              showContinue: true,
+              actionText: qualification.state === 'qualified' ? 'Continue analysis' : 'Continue anyway',
+            });
             if (activity?.text) {
               const cleanText = stripQualificationMarker(activity.text);
               action = {
@@ -647,17 +681,31 @@ async function startChat(aemJson, pageUrl) {
               };
               if (!cleanText) return;
             }
+          } else if (isAemUrlPrompt(activity) && !aemUrlRetrySent) {
+            aemUrlRetrySent = true;
+            setQualificationStatus({
+              state: 'pending',
+              title: 'Checking Self-Service Web qualification',
+              detail: 'Providing the normalized aemURL to the UMT topic.',
+            });
+            sendHiddenMessage(`aemURL: ${pageContext.liveUrl}`);
           }
         }
         if (action.type === 'DIRECT_LINE/CONNECT_FULFILLED' && !connected) {
           connected = true;
           setTimeout(() => {
             if (useCases.includes('selfServiceWeb')) {
-              dispatch({
-                type: 'WEB_CHAT/SEND_MESSAGE',
-                payload: { text: qualificationMessage }
-              });
-              analysisFallbackTimer = setTimeout(() => sendOpeningMessage(), 10000);
+              sendPendingAnalysis = () => sendOpeningMessage();
+              sendHiddenMessage(qualificationMessage);
+              qualificationTimeoutTimer = setTimeout(() => {
+                setQualificationStatus({
+                  state: 'pending',
+                  title: 'Qualification still pending',
+                  detail: 'The UMT topic has not returned a qualification result yet.',
+                  showContinue: true,
+                  actionText: 'Continue without result',
+                });
+              }, 30000);
               return;
             }
             sendOpeningMessage();
@@ -672,6 +720,11 @@ async function startChat(aemJson, pageUrl) {
         store,
         userID: 'aem-author',
         username: 'Author',
+        activityMiddleware: () => next => (...args) => {
+          const [{ activity }] = args;
+          if (activity?.channelData?.hiddenFromTranscript) return false;
+          return next(...args);
+        },
         styleOptions: {
           backgroundColor: '#f7f9fc',
           bubbleBackground: '#ffffff',
