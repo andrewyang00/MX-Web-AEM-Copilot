@@ -638,7 +638,6 @@ async function startChat(aemJson, pageUrl) {
     let connected = false;
     let analysisMessageSent = false;
     let qualificationTimeoutTimer = null;
-    let aemUrlRetrySent = false;
     const store = window.WebChat.createStore(
       {},
       ({ dispatch }) => next => action => {
@@ -649,13 +648,6 @@ async function startChat(aemJson, pageUrl) {
               text,
               channelData: { hiddenFromTranscript: true },
             }
-          });
-        }
-
-        function sendVisibleMessage(text) {
-          dispatch({
-            type: 'WEB_CHAT/SEND_MESSAGE',
-            payload: { text }
           });
         }
 
@@ -693,14 +685,14 @@ async function startChat(aemJson, pageUrl) {
               };
               if (!cleanText) return;
             }
-          } else if (isAemUrlPrompt(activity) && !aemUrlRetrySent) {
-            aemUrlRetrySent = true;
+          } else if (isAemUrlPrompt(activity)) {
             setQualificationStatus({
               state: 'pending',
-              title: 'Checking Self-Service Web qualification',
-              detail: 'Providing the normalized URL to the UMT topic.',
+              title: 'Agent needs aemURL input',
+              detail: `The Agent topic did not accept the pre-filled URL. Use ${pageContext.liveUrl} if you want to answer it manually, or continue without the UMT result.`,
+              showContinue: true,
+              actionText: 'Continue without result',
             });
-            sendVisibleMessage(pageContext.liveUrl);
           } else if (isQualificationError(activity)) {
             setQualificationStatus({
               state: 'error',
@@ -716,7 +708,7 @@ async function startChat(aemJson, pageUrl) {
           setTimeout(() => {
             if (useCases.includes('selfServiceWeb')) {
               sendPendingAnalysis = () => sendOpeningMessage();
-              sendVisibleMessage(qualificationMessage);
+              sendHiddenMessage(qualificationMessage);
               qualificationTimeoutTimer = setTimeout(() => {
                 setQualificationStatus({
                   state: 'pending',
