@@ -23,6 +23,7 @@ let bladeLibrary = [];
 let chatStarted = false;
 let selectedUseCases = ['selfServiceWeb'];
 let currentQualification = null;
+let currentProjectResults = null;
 let sendPendingAnalysis = null;
 
 // ── DOM refs ──
@@ -43,6 +44,10 @@ const qualificationCard = document.getElementById('qualification-card');
 const qualificationTitle = document.getElementById('qualification-title');
 const qualificationDetail = document.getElementById('qualification-detail');
 const qualificationContinueBtn = document.getElementById('qualificationContinueBtn');
+const projectsCard = document.getElementById('projects-card');
+const projectsTitle = document.getElementById('projects-title');
+const projectsDetail = document.getElementById('projects-detail');
+const projectsList = document.getElementById('projects-list');
 
 
 // ── POC secret storage ──
@@ -172,6 +177,32 @@ function setQualificationStatus(result) {
     : null;
 }
 
+function setProjectsStatus(result) {
+  if (!projectsCard || !projectsTitle || !projectsDetail || !projectsList) return;
+  const state = result?.state || 'pending';
+  projectsCard.classList.remove('found', 'none', 'pending', 'not-applicable', 'error');
+  projectsCard.classList.add(state);
+  projectsTitle.textContent = result?.title || 'Project lookup status unavailable';
+  projectsDetail.textContent = result?.detail || '';
+  projectsList.innerHTML = '';
+
+  const projects = Array.isArray(result?.projects) ? result.projects : [];
+  projects.slice(0, 5).forEach(project => {
+    const item = document.createElement('div');
+    item.className = 'project-result';
+    const name = project.ProjectName || project.projectName || project.name || 'Untitled project';
+    const status = project.Status || project.status || 'Status unavailable';
+    const date = project.PublishDateTime || project.publishDateTime || project.publishTargetDate || '';
+    item.innerHTML = `
+      <div class="project-result-name">${escapeHtml(name)}</div>
+      <div class="project-result-meta">${escapeHtml([status, date].filter(Boolean).join(' - '))}</div>
+    `;
+    projectsList.appendChild(item);
+  });
+
+  currentProjectResults = ['found', 'none'].includes(state) ? result : null;
+}
+
 qualificationContinueBtn?.addEventListener('click', () => {
   if (!sendPendingAnalysis) {
     setStatus('Analysis is not ready yet.', true);
@@ -210,6 +241,15 @@ function tryParseJson(value) {
   }
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function extractQualificationFromActivity(activity) {
   if (activity?.from?.role === 'user' || activity?.from?.id === 'aem-author') {
     return null;
@@ -238,6 +278,73 @@ function extractQualificationFromActivity(activity) {
   return null;
 }
 
+function parseProjectsJson(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string') return [];
+  const parsed = tryParseJson(value);
+  return Array.isArray(parsed) ? parsed : [];
+}
+
+function extractWorkfrontProjectsFromActivity(activity) {
+  if (activity?.from?.role === 'user' || activity?.from?.id === 'aem-author') {
+    return null;
+  }
+
+  const structured = [
+    activity?.value,
+    activity?.channelData?.workfrontProjects,
+    activity?.channelData?.relatedProjects,
+  ].filter(Boolean);
+
+  for (const candidate of structured) {
+    const projectCount = candidate.projectcount ?? candidate.projectCount ?? candidate.workfrontProjectCount;
+    const projectJson = candidate.projectjson ?? candidate.projectsJson ?? candidate.workfrontProjectJson;
+    const projects = parseProjectsJson(projectJson);
+    if (projectCount !== undefined || projects.length) {
+      const count = Number(projectCount ?? projects.length) || projects.length;
+      return {
+        state: count > 0 ? 'found' : 'none',
+        title: count > 0 ? `${count} related active project${count === 1 ? '' : 's'} found` : 'No related active projects found',
+        detail: candidate.statusmessage || candidate.statusMessage || candidate.workfrontStatusMessage || '',
+        projects,
+        raw: candidate,
+      };
+    }
+  }
+
+  const text = activity?.text || '';
+  if (!/workfront|active related project|active workfront project/i.test(text)) return null;
+
+  const countMatch = text.match(/(\d+)\s+active\s+related\s+project/i) ||
+    text.match(/(\d+)\s+active\s+workfront\s+project/i);
+  const count = countMatch ? Number(countMatch[1]) : null;
+  const projects = [];
+  const projectBlocks = text.split(/Project Name:/i).slice(1);
+  projectBlocks.forEach(block => {
+    const lines = block.split(/\r?\n/).map(line => line.replace(/^[\s\-*o]+/, '').trim()).filter(Boolean);
+    const name = lines[0] || '';
+    const statusLine = lines.find(line => /^Status:/i.test(line));
+    const dateLine = lines.find(line => /Publish (Target )?Date:/i.test(line));
+    if (name) {
+      projects.push({
+        ProjectName: name,
+        Status: statusLine ? statusLine.replace(/^Status:\s*/i, '') : '',
+        PublishDateTime: dateLine ? dateLine.replace(/^Publish (Target )?Date:\s*/i, '') : '',
+      });
+    }
+  });
+
+  const resolvedCount = count ?? projects.length;
+  return {
+    state: resolvedCount > 0 ? 'found' : 'none',
+    title: resolvedCount > 0 ? `${resolvedCount} related active project${resolvedCount === 1 ? '' : 's'} found` : 'No related active projects found',
+    detail: resolvedCount > 0 ? 'Review potential parallel or conflicting in-flight work before continuing.' : 'No active related Workfront projects were reported.',
+    projects,
+    raw: { text },
+  };
+}
+
 function stripQualificationMarker(text) {
   return String(text || '').replace(/SSW_QUALIFICATION_RESULT\s*:\s*\{[\s\S]*?\}(?:\s|$)/, '').trim();
 }
@@ -253,7 +360,7 @@ function isQualificationError(activity) {
 }
 
 function buildQualificationLookupMessage(pageContext) {
-  return pageContext.liveUrl;
+  return `pre-flight ${pageContext.liveUrl}`;
 }
 
 function slugToTitle(slug) {
@@ -632,6 +739,7 @@ async function startChat(aemJson, pageUrl) {
     const useCases = readSelectedUseCases();
     const openingMessage = buildOpeningMessage(pageUrl, aemJson, templateName, useCases);
     const qualificationMessage = buildQualificationLookupMessage(pageContext);
+    const shouldRunPreflight = useCases.includes('selfServiceWeb') || useCases.includes('qa');
     let connected = false;
     let analysisMessageSent = false;
     let qualificationTimeoutTimer = null;
@@ -665,6 +773,10 @@ async function startChat(aemJson, pageUrl) {
         if (action.type === 'DIRECT_LINE/INCOMING_ACTIVITY') {
           const activity = action.payload?.activity;
           const qualification = extractQualificationFromActivity(activity);
+          const workfrontProjects = extractWorkfrontProjectsFromActivity(activity);
+          if (workfrontProjects) {
+            setProjectsStatus(workfrontProjects);
+          }
           if (qualification) {
             setQualificationStatus({
               ...qualification,
@@ -703,7 +815,7 @@ async function startChat(aemJson, pageUrl) {
         if (action.type === 'DIRECT_LINE/CONNECT_FULFILLED' && !connected) {
           connected = true;
           setTimeout(() => {
-            if (useCases.includes('selfServiceWeb')) {
+            if (shouldRunPreflight) {
               sendPendingAnalysis = () => sendOpeningMessage();
               sendHiddenMessage(qualificationMessage);
               qualificationTimeoutTimer = setTimeout(() => {
@@ -718,7 +830,7 @@ async function startChat(aemJson, pageUrl) {
               return;
             }
             sendOpeningMessage();
-          }, useCases.includes('selfServiceWeb') ? 1200 : 500);
+          }, shouldRunPreflight ? 1200 : 500);
         }
         return next(action);
       }
@@ -1580,8 +1692,8 @@ How to read the payload:
 5. For Optional Blades Available, use deterministicValidation.optionalAvailable exactly. If it is empty, say there are no optional blades available from the selected template.
 6. Do not recommend blades from non-selected templates, visualTemplateReferences, or alternate inference candidates as optional enhancements.
 7. Use bladeOrderGuide.expectedOrder when listing required, optional present, optional available, missing, and recommended additions. When recommending a blade to add, include bladeOrderGuide.expectedOrder.recommendedPlacement so the user knows what area it belongs near.
-8. If useCases.selfServiceWebSelected is true, a separate short message was already sent before this payload asking you to check page.normalizedLiveUrl in UMT. Use that lookup result at the top of your analysis. Return the result to the extension as channelData.selfServiceWebQualification or value with fields { "qualified": boolean, "reason": string, "source": "Dataverse" }. If structured channelData is not available, include one hidden marker line exactly like: SSW_QUALIFICATION_RESULT:{"qualified":true,"reason":"Matched qualified URL record","source":"Dataverse"}.
-9. If Self-Service Web is not qualified, tell the user at the top that they should not continue with Self-Service Web until the URL is qualified, then still provide any QA-oriented observations requested by the selected use cases.
+8. A separate pre-flight message was already sent before this payload for page.normalizedLiveUrl. Use the SSW and Workfront lookup results at the top of your analysis. Return SSW results as channelData.selfServiceWebQualification or value with fields { "qualified": boolean, "reason": string, "source": "Dataverse" }. If structured channelData is not available, include one hidden marker line exactly like: SSW_QUALIFICATION_RESULT:{"qualified":true,"reason":"Matched qualified URL record","source":"Dataverse"}.
+9. If Self-Service Web is not qualified, tell the user at the top that they should not continue with Self-Service Web until the URL is qualified. If Workfront returns active projects, call out possible parallel/conflicting in-flight work before the blade guidance.
 
 Reporting rules (from KB Author_Output_Style and QA_Governance):
 - Use the four KB statuses verbatim: ✓ Present, ⚠ Possible QA Issue, ✕ Missing, ? Unable to Confirm.
@@ -1629,11 +1741,21 @@ analyzeBtn.addEventListener('click', async () => {
         title: 'Checking Self-Service Web qualification',
         detail: 'Waiting for the Agent Dataverse lookup result for this URL.',
       });
+      setProjectsStatus({
+        state: 'pending',
+        title: 'Checking related active projects',
+        detail: 'Waiting for the Agent Workfront project lookup result for this URL.',
+      });
     } else {
       setQualificationStatus({
         state: 'not-applicable',
         title: 'Self-Service Web not selected',
         detail: 'Qualification lookup skipped for this analysis.',
+      });
+      setProjectsStatus({
+        state: 'pending',
+        title: 'Checking related active projects',
+        detail: 'Waiting for the Agent Workfront project lookup result for this URL.',
       });
     }
     currentAemJson = await fetchAemJson(currentPageUrl);
@@ -1657,6 +1779,7 @@ refreshBtn.addEventListener('click', async () => {
   chatStarted = false;
   bladeLibrary = [];
   currentQualification = null;
+  currentProjectResults = null;
   webchatEl.innerHTML = '';
   libraryList.innerHTML = '';
   libraryStatus.textContent = 'Not loaded — click Analyze first';
@@ -1665,6 +1788,11 @@ refreshBtn.addEventListener('click', async () => {
     'Click <strong>Analyze</strong> to load this page\'s context and start a conversation with your AEM Copilot.';
   setStatus(null);
   syncUseCaseState();
+  setProjectsStatus({
+    state: 'pending',
+    title: 'Not checked yet',
+    detail: 'Analyze a page to check for related in-flight Workfront projects.',
+  });
   await detectPage();
 });
 
